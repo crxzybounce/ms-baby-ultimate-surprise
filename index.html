@@ -122,7 +122,7 @@
 (() => {
   "use strict";
 
-  const BUILD = "FRESH-START-1.0";
+  const BUILD = "FRESH-START-1.1";
 
   const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const RX_UUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -140,6 +140,7 @@
   let rxTextBuffer = "";
 
   let currentScanKind = null;
+  let phoneScanStartedAt = 0;
   let pendingScanStart = null;
   let scanStartTimer = null;
   let scanStartAttempts = 0;
@@ -407,33 +408,56 @@
 
     if (type === "SCAN_STARTED") {
       clearPendingScanStart();
-      currentScanKind = p[1];
-      showLiveScan(currentScanKind, 0, 0, 0, false, 30);
+      currentScanKind = p[1] || "BASELINE";
+      phoneScanStartedAt = Date.now();
+      showLiveScan(currentScanKind, 0, 0, 0, false, 30, 0);
       return;
     }
 
     if (type === "SCAN_PROGRESS") {
-      currentScanKind = p[1];
+      currentScanKind = p[1] || currentScanKind || "BASELINE";
+
+      const pct = finiteNumber(p[2], 0);
+      const bpm = finiteNumber(p[3], 0);
+      const temp = finiteNumber(p[4], 0);
+      const finger = p[5] === "1";
+
+      let seconds = finiteNumber(p[6], NaN);
+      if (!Number.isFinite(seconds)) {
+        if (phoneScanStartedAt > 0) {
+          seconds = Math.max(
+            0,
+            Math.ceil(30 - (Date.now() - phoneScanStartedAt) / 1000)
+          );
+        } else {
+          seconds = Math.max(0, Math.ceil((100 - pct) * 0.30));
+        }
+      }
+
+      const ir = finiteNumber(p[7], 0);
+
       showLiveScan(
-        p[1],
-        Number(p[2]),
-        Number(p[3]),
-        Number(p[4]),
-        p[5] === "1",
-        Number(p[6]),
-        Number(p[7])
+        currentScanKind,
+        pct,
+        bpm,
+        temp,
+        finger,
+        seconds,
+        ir
       );
       return;
     }
 
     if (type === "SCAN_RETRY") {
       clearPendingScanStart();
+      phoneScanStartedAt = 0;
       showScanRetry(p[1], p[2] || "SIGNAL");
       return;
     }
 
     if (type === "SCAN_DONE") {
       clearPendingScanStart();
+      phoneScanStartedAt = 0;
 
       const result = {
         kind: p[1],
@@ -554,8 +578,21 @@
   }
 
   function showLiveScan(kind, pct, bpm, temp, finger, seconds, ir = 0) {
-    const hrText = finger && bpm > 0 ? `${Math.round(bpm)} BPM` : "Reading…";
-    const tempText = temp !== 0 ? `${temp.toFixed(2)} °C` : "Reading…";
+    pct = finiteNumber(pct, 0);
+    bpm = finiteNumber(bpm, 0);
+    temp = finiteNumber(temp, 0);
+    seconds = finiteNumber(seconds, 30);
+    ir = finiteNumber(ir, 0);
+
+    const hrText =
+      finger && bpm > 0
+        ? `${Math.round(bpm)} BPM`
+        : "Reading…";
+
+    const tempText =
+      temp !== 0
+        ? `${temp.toFixed(2)} °C`
+        : "Reading…";
 
     render(`
       <div class="task">${scanTitle(kind)}</div>
@@ -1118,6 +1155,11 @@
     }
 
     showCommandFailure(`Feather error: ${code}`);
+  }
+
+  function finiteNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
   }
 
   function formatSigned(value) {
